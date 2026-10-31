@@ -1,0 +1,23 @@
+--- a/include/linux/string.h
++++ b/include/linux/string.h
+@@ -256,6 +256,20 @@
+ #ifndef __HAVE_ARCH_MEMCPY
+ extern void * memcpy(void *,const void *,__kernel_size_t);
+ #endif
++
++static inline char *strncpy(char *dest, const char *src, __kernel_size_t count)
++{
++	char *tmp = dest;
++
++	while (count) {
++		if ((*tmp = *src) != 0)
++			src++;
++		tmp++;
++		count--;
++	}
++	return dest;
++}
++
+ #ifndef __HAVE_ARCH_MEMMOVE
+ extern void * memmove(void *,const void *,__kernel_size_t);
+ #endif

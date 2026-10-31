@@ -1,0 +1,9 @@
+--- a/include/uapi/linux/netfilter_ipv6.h
++++ b/include/uapi/linux/netfilter_ipv6.h
+@@ -12,5 +12,6 @@
+ #include <linux/netfilter.h>
+ #include <linux/typelimits.h>
++#include <linux/netfilter_ipv4.h>
+ 
+ /* only for userspace compatibility */
+ #ifndef __KERNEL__

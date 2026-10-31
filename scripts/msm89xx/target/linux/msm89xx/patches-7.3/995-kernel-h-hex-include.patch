@@ -1,0 +1,10 @@
+--- a/include/linux/kernel.h
++++ b/include/linux/kernel.h
+@@ -21,6 +21,7 @@
+ #include <linux/compiler.h>
+ #include <linux/container_of.h>
+ #include <linux/bitops.h>
++#include <linux/hex.h>
+ #include <linux/kstrtox.h>
+ #include <linux/log2.h>
+ #include <linux/math.h>
