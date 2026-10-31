@@ -1,6 +1,7 @@
 #!/bin/sh
-chmod +x /etc/init.d/auto-apn
-/etc/init.d/auto-apn enable
+chmod +x /usr/bin/auto_apn-worker
+chmod +x /etc/init.d/auto_apn
+/etc/init.d/auto_apn enable
 chmod +x /etc/init.d/swapfile
 /etc/init.d/swapfile enable
 chmod +x /etc/init.d/sta_wifi

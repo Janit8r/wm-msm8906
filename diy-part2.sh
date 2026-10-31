@@ -17,6 +17,11 @@ git clone https://github.com/lkiuyu/DbusSmsForwardCPlus package/DbusSmsForwardCP
 cp -r "$GITHUB_WORKSPACE/scripts/files-8916" "$GITHUB_WORKSPACE/openwrt/files"
 ls -R "$GITHUB_WORKSPACE/openwrt/files"
 
+# 保证可执行位（git 在 Windows 上容易把 100755 丢成 100644，procd 会因此无法 exec）
+chmod +x "$GITHUB_WORKSPACE/openwrt/files/etc/init.d/"* 2>/dev/null
+chmod +x "$GITHUB_WORKSPACE/openwrt/files/usr/bin/"* 2>/dev/null
+ls -l "$GITHUB_WORKSPACE/openwrt/files/etc/init.d/" "$GITHUB_WORKSPACE/openwrt/files/usr/bin/" 2>/dev/null
+
 
 # 压制 GCC 14 类型错误
 pwd

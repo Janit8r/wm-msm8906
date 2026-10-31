@@ -1,63 +1,48 @@
 #!/bin/sh /etc/rc.common
+#
+# auto_apn —— 由 procd 托管 /usr/bin/auto_apn-worker
+#
+# 背景（务必保留这些行为，否则 simadmin / 拨号会失效）：
+#
+#  1) 本机的 modem 由 remoteproc(qcom-q6v5-mss) 拉起，实测上电后约 3 分钟才出现。
+#     原实现只等 30 x 2s = 60s，等不到就 `logger "no modem"` 退出，
+#     于是 mmcli --enable 永远不执行，modem 一直停在 disabled 状态。
+#     这会让 simadmin 的 /api/cells 直接报：
+#       org.freedesktop.ModemManager1.Error.Core.WrongState:
+#       Wrong state: modem in disabled state
+#
+#  2) ModemManager 1.24 的这个构建里没有 --no-auto-enable，但实测也不会自动启用
+#     modem（重启 MM 后 modem 依旧回到 disabled），所以必须由 worker 显式启用。
+#
+#  3) rc.common 的 start() 是同步执行的，S99 阶段如果在这里长时间阻塞会拖住开机。
+#     所以真正的等待/轮询全部放在 worker 里，由 procd 在后台托管，start 立即返回。
+#
+#  4) 早期版本在 start() 里用 `worker &` 起后台进程，实测这个子进程会被回收
+#     （ps 里查不到，pidfile 里的 pid 是死的），modem 一旦回到 disabled 就再也没人管。
+#     改用 procd 托管后，worker 常驻且意外退出会被自动拉起。
+#
+#  5) MM 重启、modem 复位、remoteproc rebind 之后 modem 会重新变回 disabled，
+#     所以 worker 配置完 APN 后不退出，转入看护循环持续把它拉回 enabled。
+
 START=99
+STOP=10
 
-SECTION="modem"
+USE_PROCD=1
+PROG=/usr/bin/auto_apn-worker
 
-start() {
-    M=""
-    i=0
-    while [ -z "$M" ] && [ $i -lt 30 ]; do
-        M=$(mmcli -L 2>/dev/null | grep -o 'Modem/[0-9]*' | cut -d/ -f2 | head -1)
-        [ -z "$M" ] && sleep 2
-        i=$((i+1))
-    done
-    [ -z "$M" ] && { logger -t auto-apn "no modem"; exit 0; }
-
-    STATE=$(mmcli -m $M 2>/dev/null | grep -o 'state: *[a-z-]*' | head -1 | awk '{print $2}')
-    [ "$STATE" = "disabled" ] && mmcli -m $M --enable
-    sleep 5
-
-    SIM_PATH=$(mmcli -m $M 2>/dev/null | sed -n 's/.*primary sim path: *\(.*\)/\1/p' | head -1)
-    [ -z "$SIM_PATH" ] && { logger -t auto-apn "no sim, skip"; exit 0; }
-
-    SIM_ID=$(echo "$SIM_PATH" | grep -o '[0-9]*$')
-    [ -z "$SIM_ID" ] && { logger -t auto-apn "no sim id, skip"; exit 0; }
-
-    IMSI=""
-    i=0
-    while [ -z "$IMSI" ] && [ $i -lt 20 ]; do
-        IMSI=$(mmcli -i $SIM_ID 2>/dev/null | sed -n 's/.*imsi: *\([0-9]*\).*/\1/p' | head -1)
-        [ -z "$IMSI" ] && sleep 3
-        i=$((i+1))
-    done
-    [ -z "$IMSI" ] && { logger -t auto-apn "no imsi, skip"; exit 0; }
-
-    CODE=$(echo "$IMSI" | cut -c1-5)
-    logger -t auto-apn "IMSI=$IMSI CODE=$CODE"
-
-    case $CODE in
-        46000|46002|46004|46007|46008) APN=cmnet; AUTH="none"; USER=""; PASS="" ;;
-        46001|46006|46009) APN=3gnet; AUTH="none"; USER=""; PASS="" ;;
-        46003|46011|46012) APN=ctnet; AUTH="both"; USER="ctnet@mycdma.cn"; PASS="vnet.mobi" ;;
-        46015|46022|46123) APN=cbnet; AUTH="none"; USER=""; PASS="" ;;
-        *)
-            APN=$(mmcli -m $M 2>/dev/null | sed -n 's/.*initial bearer apn: *\(.*\)/\1/p' | head -1)
-            [ -z "$APN" ] && APN=cmnet
-            AUTH="none"; USER=""; PASS=""
-            ;;
-    esac
-
-    logger -t auto-apn "APN=$APN"
-
-    uci set network.$SECTION.apn="$APN"
-    uci set network.$SECTION.username="$USER"
-    uci set network.$SECTION.password="$PASS"
-    uci set network.$SECTION.auth="$AUTH"
-    uci commit network
-
-    ifdown "$SECTION" 2>/dev/null
-    sleep 2
-    ifup "$SECTION"
+start_service() {
+	procd_open_instance auto_apn
+	procd_set_param command "$PROG"
+	# respawn <阈值秒> <超时秒> <重试次数>：1 小时内崩溃 5 次以内都会自动拉起
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
 }
 
-stop() { :; }
+stop_service() {
+	# worker 的 pidfile 由它自己维护，procd 停实例时进程已被终止，
+	# 这里只清掉残留状态文件，避免下次开机误判“APN 已配置过”。
+	rm -f /var/run/auto_apn.pid
+	return 0
+}
