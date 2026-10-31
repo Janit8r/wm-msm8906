@@ -8,12 +8,18 @@
 #   改了也是白改。START=99 时 wifi 已经起来，配置一定存在。
 #
 # 参数说明：
-#   country=CN  不设国家码时 regdomain 是 world(00)，部分信道和功率会被限制。
-#               CN 的 2.4G（2400-2483MHz）允许到 30dBm，不会反过来压低功率。
-#   txpower=20  mac80211.sh 会把 wifi-device 的 txpower 转成
+#   country=CN  不设国家码时 regdomain 是 world(00)，功率会被压到 20dBm、
+#               信道也少。CN 反而更宽松 —— ImmortalWrt 带的 regdb 是打过
+#               补丁的，CN 的 2.4G（2400-2483MHz）写的是 30dBm，比官方
+#               wireless-regdb 的 20dBm 高，不会反过来压低功率。
+#               （官方 regdb 里确实是 AU 36 > US 30 > CN 20，但这里不是官方版）
+#   txpower=25  mac80211.sh 会把 wifi-device 的 txpower 转成
 #               `iw phy <phy> set txpower fixed <N>00`。
-#               wcn36xx 的硬件上限就是 20dBm —— 实测推到 30 会被 clamp 回 20，
-#               所以填 20 就是「拉满」，再大没有意义。
+#               实测：wcn3620 的 `iw phy phy0 info` 对 ch1-13 都报 25.0 dBm，
+#               这是驱动/NV 校准给出的真实上限；请求 26~40 都会被 clamp 回 25，
+#               而 25 本身能原样生效。所以 25 就是「拉满」。
+#               注意：25dBm(316mW) 超过中国法规 2.4G 的 20dBm EIRP 限制，
+#               自己用可以，别拿去商用。想守法规就改回 20。
 #   power_save  uci 里没有对应选项，mac80211.sh 也不会去动它，
 #               只能在接口起来之后用 `iw dev X set power_save off` 补一刀。
 #               热插拔场景（wifi reload / restart）由
@@ -22,7 +28,7 @@
 START=99
 STOP=10
 
-TXPOWER=20
+TXPOWER=25
 
 CHANGED=0
 
