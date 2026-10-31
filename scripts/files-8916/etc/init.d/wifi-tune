@@ -1,0 +1,77 @@
+#!/bin/sh /etc/rc.common
+#
+# wifi-tune —— 每次开机把无线调到「国家码 CN / 发射功率最大 / 关闭省电」
+#
+# 为什么用 init 脚本而不是 uci-defaults：
+#   uci-defaults 在 S10 阶段执行，那时 /etc/config/wireless 可能还没被
+#   `wifi config` 按硬件探测生成出来，config_load 拿不到 wifi-device 段落，
+#   改了也是白改。START=99 时 wifi 已经起来，配置一定存在。
+#
+# 参数说明：
+#   country=CN  不设国家码时 regdomain 是 world(00)，部分信道和功率会被限制。
+#               CN 的 2.4G（2400-2483MHz）允许到 30dBm，不会反过来压低功率。
+#   txpower=20  mac80211.sh 会把 wifi-device 的 txpower 转成
+#               `iw phy <phy> set txpower fixed <N>00`。
+#               wcn36xx 的硬件上限就是 20dBm —— 实测推到 30 会被 clamp 回 20，
+#               所以填 20 就是「拉满」，再大没有意义。
+#   power_save  uci 里没有对应选项，mac80211.sh 也不会去动它，
+#               只能在接口起来之后用 `iw dev X set power_save off` 补一刀。
+#               热插拔场景（wifi reload / restart）由
+#               /etc/hotplug.d/iface/99-wifi-tune 兜住。
+
+START=99
+STOP=10
+
+TXPOWER=20
+
+CHANGED=0
+
+tune_config() {
+	_cfg="$1"
+	if [ "$(uci -q get wireless.$_cfg.country)" != "CN" ] || \
+	   [ "$(uci -q get wireless.$_cfg.txpower)" != "$TXPOWER" ]; then
+		uci -q set wireless.$_cfg.country='CN'
+		uci -q set wireless.$_cfg.txpower="$TXPOWER"
+		CHANGED=1
+	fi
+	return 0
+}
+
+wifi_devs() {
+	iw dev 2>/dev/null | awk '/Interface/{print $2}'
+}
+
+tune_powersave() {
+	for _d in $(wifi_devs); do
+		iw dev "$_d" set power_save off 2>/dev/null
+	done
+}
+
+start() {
+	. /lib/functions.sh
+
+	# 等无线接口出现，最多 20s
+	_i=0
+	while [ "$_i" -lt 10 ]; do
+		[ -n "$(wifi_devs)" ] && break
+		_i=$((_i + 1))
+		sleep 2
+	done
+
+	config_load wireless
+	config_foreach tune_config wifi-device
+
+	if [ "$CHANGED" = "1" ]; then
+		uci -q commit wireless
+		logger -t wifi-tune "wireless config updated (country=CN txpower=${TXPOWER}dBm), reloading"
+		wifi reload >/dev/null 2>&1
+		sleep 5
+	fi
+
+	tune_powersave
+	logger -t wifi-tune "applied: country=CN txpower=${TXPOWER}dBm power_save=off"
+}
+
+stop() {
+	return 0
+}

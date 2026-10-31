@@ -1,0 +1,17 @@
+#!/bin/sh
+#
+# 每次接口 up 时把无线网卡的省电关掉。
+#
+# uci 里没有 power_save 选项，mac80211.sh 也不会去动它，
+# 所以只能在接口起来之后补一刀。触发场景：
+#   开机、wifi reload、wifi restart、改信道/带宽、切 AP/STA 模式
+#
+# 对应的开机首次应用在 /etc/init.d/wifi-tune 里。
+
+[ "$ACTION" = "ifup" ] || exit 0
+
+for _d in $(iw dev 2>/dev/null | awk '/Interface/{print $2}'); do
+	iw dev "$_d" set power_save off 2>/dev/null
+done
+
+exit 0

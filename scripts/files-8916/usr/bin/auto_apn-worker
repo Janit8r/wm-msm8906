@@ -31,6 +31,9 @@
 #      所以还要保证 network.modem 接口是启用的，由 netifd 的 modemmanager proto
 #      负责建 bearer、写 IP/默认路由/DNS。
 #      （配套的 /etc/uci-defaults/zz-modem-data 负责开机时就把它改对）
+#   6) 有 IPv4 也不等于真能上网：bearer 僵死、上游掉线、APN 变更都会出现
+#      「有 IP 但 ping 不通」。所以还要做真实连通性探测（ensure_online），
+#      连续 3 轮（约 90s）不通就重拨一次 network.modem。
 #
 # 解析注意：
 #   不要用 `grep -o 'state: *[a-z-]*'` 这种写法。busybox 的 grep -o / sed 在
@@ -42,7 +45,11 @@ PIDFILE=/var/run/auto_apn.pid
 DONEFILE=/var/run/auto_apn.apn_done
 STUCKF=/var/run/auto_apn.stuck
 NOIPF=/var/run/auto_apn.noip
+OFFLINEF=/var/run/auto_apn.offline
 SECTION="modem"
+
+# 连通性探测目标：两个不同运营商的公共 DNS，任一可达就算在线
+PING_TARGETS="223.5.5.5 114.114.114.114"
 
 # 等待 modem：300 x 2s = 600s，覆盖启动耗时并留足余量
 WAIT_TRIES=300
@@ -193,11 +200,53 @@ ensure_data() {
 	return 0
 }
 
+# 连通性探测：任一个公共 DNS 能 ping 通就算在线
+check_online() {
+	for _t in $PING_TARGETS; do
+		ping -c 1 -W 3 "$_t" >/dev/null 2>&1 && return 0
+	done
+	return 1
+}
+
+# 联网兜底：有 IP 不代表真的能上网（bearer 僵死、上游掉线、APN 变了都这样）。
+# 每轮做一次真实探测，连续 3 轮（约 90s）不通就重拨一次。
+# 这里故意不做 mmcli --reset：实测反复 reset 活着的 modem 会把它搞成
+# 「enabled 但 detached」的死状态，只能重启才能恢复，风险大于收益。
+ensure_online() {
+	# 没有 IPv4 时由 ensure_data 负责，这里不重复处理
+	ip -4 addr show wwan0 2>/dev/null | grep -q 'inet ' || return 0
+
+	if check_online; then
+		if [ -f "$OFFLINEF" ]; then
+			log "internet is back"
+			rm -f "$OFFLINEF"
+		fi
+		return 0
+	fi
+
+	_n=0
+	[ -f "$OFFLINEF" ] && _n=$(cat "$OFFLINEF" 2>/dev/null)
+	case "$_n" in ''|*[!0-9]*) _n=0 ;; esac
+	_n=$((_n + 1))
+
+	if [ "$_n" -ge 3 ]; then
+		log "no internet for $((_n * WATCH_INTERVAL))s despite IPv4, redialing network.$SECTION"
+		echo 0 > "$OFFLINEF"
+		ifdown "$SECTION" 2>/dev/null
+		sleep 2
+		ifup "$SECTION" 2>/dev/null
+		return 0
+	fi
+
+	echo "$_n" > "$OFFLINEF"
+	log "connectivity check failed ($_n/3)"
+	return 0
+}
+
 configure_apn_once() {
 	# 同一轮开机只配置一次
 	[ -f "$DONEFILE" ] && return 0
 	_m="$1"
-
 	_sim_path=$(mmcli -m "$_m" -K 2>/dev/null | sed -n 's/^modem\.generic\.sim *: *//p' | head -1)
 	if [ -z "$_sim_path" ] || [ "$_sim_path" = "--" ]; then
 		log "no sim yet, skip apn"
@@ -275,6 +324,7 @@ else
 	ensure_enabled "$_m"
 	configure_apn_once "$_m"
 	ensure_data "$_m"
+	ensure_online
 fi
 
 # 常驻看护
@@ -284,6 +334,7 @@ while true; do
 		ensure_enabled "$_m"
 		configure_apn_once "$_m"
 		ensure_data "$_m"
+		ensure_online
 	fi
 	sleep "$WATCH_INTERVAL"
 done
