@@ -16,6 +16,11 @@ on:
         required: false
         default: false
         type: boolean
+      device:
+        description: ' ← 只编译指定机型（默认 wf2，填 all 编译全部）'
+        required: false
+        default: 'wf2'
+        type: string
 
 
 env:
@@ -31,7 +36,34 @@ env:
   TZ: Asia/Shanghai
 
 jobs:
+  # 根据 workflow_dispatch 的 device 参数生成矩阵，避免每次手动编译都把 13 个机型全跑一遍。
+  # 不传 / 传 all：编译全部（保持定时任务的行为不变）
+  # 传单个或逗号分隔的机型名：只编译这些
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - name: 生成编译矩阵
+        id: gen
+        run: |
+          REQ="$(echo '${{ github.event.inputs.device }}' | tr -d '[:space:]')"
+          if [ -z "$REQ" ] || [ "$REQ" = "all" ]; then
+            SEL="$ALL_DEVICES"
+          else
+            SEL=""
+            for d in $(echo "$REQ" | tr ',' ' '); do
+              case " $ALL_DEVICES " in
+                *" $d "*) SEL="$SEL $d" ;;
+                *) echo "::error::未知机型: $d"; echo "可选: $ALL_DEVICES"; exit 1 ;;
+              esac
+            done
+          fi
+          echo "matrix=$(printf '%s\n' $SEL | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          echo "本次编译机型:$SEL"
+
   build:
+    needs: prepare
     runs-on: ubuntu-24.04
     permissions:
        contents: write
@@ -39,20 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device:
-          - jz02v10
-          - ufi001c
-          - ufi001b
-          - ufi103s
-          - qrzl903
-          - w001
-          - ufi003
-          - uz801
-          - mf32
-          - mf601
-          - wf2
-          - sp970v11
-          - sp970v10
+        device: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
    
     - name: Checkout
