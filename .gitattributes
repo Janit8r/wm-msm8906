@@ -1,0 +1,11 @@
+# Windows 批处理必须是 CRLF。cmd.exe 解析 goto / label / 括号块时对纯 LF
+# 文件的处理是有问题的（会出现 goto 跳不到、块内变量不展开等诡异现象）。
+# 这里用 eol=crlf 保证：仓库里存 LF，任何平台 checkout 出来都是 CRLF，
+# 包括 GitHub Actions 的 Linux runner（刷机包就是在那上面打的）。
+*.bat text eol=crlf
+
+# 刷机包里的说明文档是给 Windows 用户直接双击打开的，同样用 CRLF
+scripts/flash-package/README.txt text eol=crlf
+
+# 其余 shell 脚本一律 LF
+*.sh text eol=lf

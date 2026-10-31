@@ -348,6 +348,63 @@ jobs:
         fi
       shell: bash
 
+    - name: 打包一键刷机包 (仅 wf2)
+      if: steps.organize.outputs.status == 'success' && matrix.device == 'wf2'
+      run: |
+        set -e
+        PKGNAME="wf2-openwrt-$(date +%Y%m%d)"
+        WORK=/tmp/wf2pkg
+        PKGDIR="$WORK/$PKGNAME"
+        rm -rf "$WORK"; mkdir -p "$PKGDIR"
+
+        # 1) 解出官方刷机素材：bootloader 各段 / lk2nd / GPT / adb / fastboot
+        unzip -q -o "$GITHUB_WORKSPACE/flash.zip" -d "$PKGDIR"
+        rm -f "$PKGDIR/edl_config.json" "$PKGDIR/flash.sh" "$PKGDIR/flash.bat"
+
+        # 1.1) 删掉刷机脚本用不到、留着只会被误刷的文件
+        #      gpt_both0.bin 是未修正的原厂 GPT，误刷会让设备变砖，必须删掉
+        rm -f "$PKGDIR"/gpt_main0.bin "$PKGDIR"/gpt_backup0.bin \
+              "$PKGDIR"/gpt_both0.bin "$PKGDIR"/zeros_1sector.bin \
+              "$PKGDIR"/zeros_33sectors.bin
+
+        # 1.2) 用精确匹配本机 eMMC 的 GPT 覆盖 flash.zip 里那份
+        #      flash.zip 自带的只到 LBA 7569374（rootfs_data 少 32MB），
+        #      仓库里这份的 last usable = 7634910，和原厂 GPT 的几何完全一致。
+        cp "$GITHUB_WORKSPACE/scripts/flash-package/gpt_both0-fixed.bin" "$PKGDIR/gpt_both0-fixed.bin"
+
+        # 2) 放入本次编译的镜像（CI 产物叫 system.img，刷机脚本按 rootfs.img 找）
+        cp "${{ env.FIRMWARE }}/boot.img"   "$PKGDIR/boot.img"
+        cp "${{ env.FIRMWARE }}/system.img" "$PKGDIR/rootfs.img"
+
+        # 3) 放入刷机脚本 + EDL 工具 + 说明
+        cp "$GITHUB_WORKSPACE"/scripts/flash-package/flash-windows.bat "$PKGDIR/"
+        cp "$GITHUB_WORKSPACE"/scripts/flash-package/flash-linux.sh    "$PKGDIR/"
+        cp "$GITHUB_WORKSPACE"/scripts/flash-package/backup-edl.bat    "$PKGDIR/"
+        cp "$GITHUB_WORKSPACE"/scripts/flash-package/README.txt        "$PKGDIR/"
+        cp "$GITHUB_WORKSPACE"/scripts/flash-package/edl/*             "$PKGDIR/"
+        chmod +x "$PKGDIR/flash-linux.sh"
+
+        # 4) 版本信息与校验和
+        KVER=$(cat "${{ env.FIRMWARE }}"/*.manifest 2>/dev/null | sed -n 's/^kernel - \([^ ]*\).*/\1/p' | head -1)
+        {
+          echo "build_time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "device: wf2 (XinXun WF2 / UFI-W-001, QRZL903, msm8916)"
+          echo "commit: ${GITHUB_SHA}"
+          echo "run: ${GITHUB_RUN_NUMBER}"
+          if [ -n "$KVER" ]; then echo "kernel: $KVER"; fi
+          echo "boot.img:   $(stat -c%s "$PKGDIR/boot.img") bytes"
+          echo "rootfs.img: $(stat -c%s "$PKGDIR/rootfs.img") bytes"
+        } > "$PKGDIR/version.txt"
+
+        ( cd "$PKGDIR" && sha256sum boot.img rootfs.img gpt_both0-fixed.bin lk2nd.img > sha256sums.txt )
+
+        # 5) 打包（zip 里保留一层目录，解压后不会散落一地）
+        ( cd "$WORK" && zip -qr "$PKGNAME.zip" "$PKGNAME" )
+        cp "$WORK/$PKGNAME.zip" "${{ env.FIRMWARE }}/"
+        echo "===== 刷机包内容 ====="
+        unzip -l "$WORK/$PKGNAME.zip"
+        ls -lh "${{ env.FIRMWARE }}/$PKGNAME.zip"
+
     - name: Upload firmware directory
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
