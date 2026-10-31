@@ -2,7 +2,7 @@
 #
 # auto_apn-worker —— 由 /etc/init.d/auto_apn 通过 procd 托管运行
 #
-# 职责：等待 modem 出现 -> 启用 -> 按 IMSI 自动配置 APN -> 常驻看护
+# 职责：等待 modem 出现 -> 启用 -> 按 IMSI 自动配置 APN -> 保证数据通道有 IP -> 常驻看护
 #
 # 为什么要单独一个脚本 + procd：
 #   rc.common 的 start() 是同步执行的，S99 阶段在这里长时间阻塞会拖住开机；
@@ -11,28 +11,40 @@
 #   交给 procd 托管最稳，进程意外退出还会被自动拉起。
 #
 # 背景：
-#   1) 本机 modem 由 remoteproc(qcom-q6v5-mss) 拉起，实测上电后约 3 分钟才出现。
+#   1) 本机 modem 由 remoteproc(qcom-q6v5-mss) 拉起，实测上电后十几秒到几分钟才出现。
 #      早期实现只等 60s，等不到就退出，mmcli --enable 永远不执行，
 #      modem 一直停在 disabled，导致 simadmin 的 /api/cells 报：
 #        org.freedesktop.ModemManager1.Error.Core.WrongState:
 #        Wrong state: modem in disabled state
 #   2) ModemManager 1.24 的这个构建里既没有 --no-auto-enable，实测也不会自动启用，
 #      必须显式 mmcli --enable。
-#   3) MM 重启 / modem 复位 / remoteproc rebind 之后 modem 会重新变回 disabled，
-#      所以要常驻看护，不能配置完就退出。
+#   3) MM 重启 / modem 复位 / remoteproc rebind / qmi-modem-410-init 重新下发 QMI
+#      profile 之后，modem 会重新变回 disabled，所以要常驻看护。
 #   4) 实测 mmcli --enable 有两种失败形态，必须分别处理：
 #        - power state 为 off 时报 "Invalid transition" -> 先 --set-power-state-on 再 enable
 #        - 状态是 enabled 但长时间 detached（无注册）-> 说明注册流程挂了，做一次 --reset
-#   5) network.modem 这个 netifd 接口被 simadmin 的 uci-defaults 显式设成
-#      disabled=1（simadmin 自己用 QMI/VoLTE 管数据通道），所以不要去 ifup 它，
-#      写了 APN 之后只在接口确实启用时才做 ifdown/ifup。
+#   5) 光把 modem 启用还不够。simadmin 的 uci-defaults 把 netifd 的 network.modem
+#      接口设成 disabled=1，而 openstick_tweak 只补了 autoconnect/auto 没清 disabled，
+#      于是 netifd 永远不启用这个接口。结果是：modem 能 registered/attached，
+#      但 MM 里没有 default bearer，wwan0 拿不到 IPv4、没有默认路由
+#      —— 表现为「注册成功但不能上网」。
+#      所以还要保证 network.modem 接口是启用的，由 netifd 的 modemmanager proto
+#      负责建 bearer、写 IP/默认路由/DNS。
+#      （配套的 /etc/uci-defaults/zz-modem-data 负责开机时就把它改对）
+#
+# 解析注意：
+#   不要用 `grep -o 'state: *[a-z-]*'` 这种写法。busybox 的 grep -o / sed 在
+#   结尾带 `*` 的子表达式上会做**最短匹配**，实测对 `state: connected` 只匹配出
+#   `state: `（空值），于是把 connected 误判成 disabled，worker 每 30 秒空跑一次
+#   mmcli --enable。统一改用 mmcli 的 -K（key-value）输出 + 精确前缀替换。
 
 PIDFILE=/var/run/auto_apn.pid
 DONEFILE=/var/run/auto_apn.apn_done
 STUCKF=/var/run/auto_apn.stuck
+NOIPF=/var/run/auto_apn.noip
 SECTION="modem"
 
-# 等待 modem：300 x 2s = 600s，覆盖实测约 180s 的启动时间并留足余量
+# 等待 modem：300 x 2s = 600s，覆盖启动耗时并留足余量
 WAIT_TRIES=300
 WAIT_INTERVAL=2
 # 看护间隔
@@ -44,16 +56,19 @@ log() {
 	logger -t auto-apn "$1"
 }
 
+# mmcli -L -K -> "modem-list.value[1] : /org/.../Modem/0" -> "0"
 modem_index() {
-	mmcli -L 2>/dev/null | grep -o 'Modem/[0-9]*' | cut -d/ -f2 | head -1
+	mmcli -L -K 2>/dev/null | sed -n 's#^modem-list\.value\[1\] *: .*/Modem/##p' | head -1
 }
 
+# "modem.generic.state : connected" -> "connected"
 modem_state() {
-	mmcli -m "$1" 2>/dev/null | grep -o 'state: *[a-z-]*' | head -1 | awk '{print $2}'
+	mmcli -m "$1" -K 2>/dev/null | sed -n 's/^modem\.generic\.state *: *//p' | head -1
 }
 
+# "modem.3gpp.packet-service-state : attached" -> "attached"
 modem_attached() {
-	mmcli -m "$1" 2>/dev/null | grep -o 'packet service state: *[a-z]*' | head -1 | awk '{print $4}'
+	mmcli -m "$1" -K 2>/dev/null | sed -n 's/^modem\.3gpp\.packet-service-state *: *//p' | head -1
 }
 
 wait_modem() {
@@ -103,7 +118,13 @@ ensure_enabled() {
 	_m="$1"
 	_s=$(modem_state "$_m")
 
-	if [ -n "$_s" ] && [ "$_s" != "disabled" ]; then
+	# 读不到状态说明 mmcli 这一轮没成功，别乱动，下一轮再看
+	if [ -z "$_s" ]; then
+		log "modem $_m: cannot read state this round, skip"
+		return 0
+	fi
+
+	if [ "$_s" != "disabled" ]; then
 		check_stuck "$_m" "$_s"
 		return 0
 	fi
@@ -126,11 +147,49 @@ ensure_enabled() {
 	_j=0
 	while [ "$_j" -lt 15 ]; do
 		_s=$(modem_state "$_m")
-		[ "$_s" != "disabled" ] && break
+		[ -n "$_s" ] && [ "$_s" != "disabled" ] && break
 		_j=$((_j + 1))
 		sleep 2
 	done
 	log "modem $_m state now: ${_s:-unknown}"
+	return 0
+}
+
+# 数据通道看护：modem 已经 attached 但 wwan0 上没有 IPv4 时，把 netifd 的
+# network.modem 接口拉起来，由 modemmanager proto 负责建 bearer、写 IP 和默认路由。
+# 少了这一步就会出现「注册成功、attached，但没 IP、不能上网」。
+ensure_data() {
+	_m="$1"
+
+	# 已经拿到 IPv4 就没事
+	if ip -4 addr show wwan0 2>/dev/null | grep -q 'inet '; then
+		rm -f "$NOIPF"
+		return 0
+	fi
+
+	# 还没 attach 就别拨，拨了也拿不到 IP
+	[ "$(modem_attached "$_m")" = "attached" ] || return 0
+
+	# 计数，避免每 30s 疯狂 ifup
+	_n=0
+	[ -f "$NOIPF" ] && _n=$(cat "$NOIPF" 2>/dev/null)
+	case "$_n" in ''|*[!0-9]*) _n=0 ;; esac
+	_n=$((_n + 1))
+	echo "$_n" > "$NOIPF"
+	# 第 1 轮立刻拨，之后每 4 轮（约 2 分钟）重拨一次
+	[ "$_n" -gt 1 ] && [ $((_n % 4)) -ne 1 ] && return 0
+
+	# 配置可能被别的 uci-defaults 改回 disabled=1
+	if [ "$(uci -q get network.$SECTION.disabled)" = "1" ]; then
+		log "network.$SECTION is disabled, clearing it"
+		uci -q set network.$SECTION.disabled='0'
+		uci -q set network.$SECTION.autoconnect='1'
+		uci -q commit network
+	fi
+
+	log "modem $_m attached but wwan0 has no IPv4, bringing up network.$SECTION"
+	_out=$(ifup "$SECTION" 2>&1)
+	[ -n "$_out" ] && log "  $_out"
 	return 0
 }
 
@@ -139,20 +198,32 @@ configure_apn_once() {
 	[ -f "$DONEFILE" ] && return 0
 	_m="$1"
 
-	_sim_path=$(mmcli -m "$_m" 2>/dev/null | sed -n 's/.*primary sim path: *\(.*\)/\1/p' | head -1)
-	[ -z "$_sim_path" ] && { log "no sim yet, skip apn"; return 0; }
+	_sim_path=$(mmcli -m "$_m" -K 2>/dev/null | sed -n 's/^modem\.generic\.sim *: *//p' | head -1)
+	if [ -z "$_sim_path" ] || [ "$_sim_path" = "--" ]; then
+		log "no sim yet, skip apn"
+		return 0
+	fi
 
-	_sim_id=$(echo "$_sim_path" | grep -o '[0-9]*$')
-	[ -z "$_sim_id" ] && { log "no sim id, skip apn"; return 0; }
+	_sim_id=$(echo "$_sim_path" | sed 's#.*/SIM/##')
+	if [ -z "$_sim_id" ]; then
+		log "no sim id, skip apn"
+		return 0
+	fi
 
 	_imsi=""
 	_i=0
 	while [ -z "$_imsi" ] && [ "$_i" -lt 20 ]; do
-		_imsi=$(mmcli -i "$_sim_id" 2>/dev/null | sed -n 's/.*imsi: *\([0-9]*\).*/\1/p' | head -1)
-		[ -z "$_imsi" ] && sleep 3
+		_imsi=$(mmcli -i "$_sim_id" -K 2>/dev/null | sed -n 's/^sim\.properties\.imsi *: *//p' | head -1)
+		if [ -z "$_imsi" ] || [ "$_imsi" = "--" ]; then
+			_imsi=""
+			sleep 3
+		fi
 		_i=$((_i + 1))
 	done
-	[ -z "$_imsi" ] && { log "no imsi, skip apn"; return 0; }
+	if [ -z "$_imsi" ]; then
+		log "no imsi, skip apn"
+		return 0
+	fi
 
 	_code=$(echo "$_imsi" | cut -c1-5)
 	log "IMSI=$_imsi CODE=$_code"
@@ -163,13 +234,17 @@ configure_apn_once() {
 		46003|46011|46012)             _apn=ctnet;  _auth="both"; _user="ctnet@mycdma.cn"; _pass="vnet.mobi" ;;
 		46015|46022|46123)             _apn=cbnet;  _auth="none"; _user="";                 _pass="" ;;
 		*)
-			_apn=$(mmcli -m "$_m" 2>/dev/null | sed -n 's/.*initial bearer apn: *\(.*\)/\1/p' | head -1)
-			[ -z "$_apn" ] && _apn=cmnet
+			_apn=$(mmcli -m "$_m" -K 2>/dev/null | sed -n 's/^modem\.3gpp\.eps\.initial-bearer\.settings\.apn *: *//p' | head -1)
+			if [ -z "$_apn" ] || [ "$_apn" = "--" ]; then
+				_apn=cmnet
+			fi
 			_auth="none"; _user=""; _pass=""
 			;;
 	esac
 
 	log "APN=$_apn"
+
+	_old=$(uci -q get network.$SECTION.apn)
 
 	uci set network.$SECTION.apn="$_apn"
 	uci set network.$SECTION.username="$_user"
@@ -177,14 +252,12 @@ configure_apn_once() {
 	uci set network.$SECTION.auth="$_auth"
 	uci commit network
 
-	# simadmin 把 network.modem 设成了 disabled=1，此时 ifup 必然失败且毫无意义；
-	# 只有接口确实启用时才需要让 netifd 重新拨号。
-	if [ "$(uci -q get network.$SECTION.disabled)" = "1" ]; then
-		log "network.$SECTION is disabled by simadmin, skip ifup (apn written to uci)"
-	else
+	# APN 变了才需要重拨；没变就别折腾正在工作的连接
+	if [ "$_old" != "$_apn" ]; then
+		log "apn changed (${_old:-none} -> $_apn), redialing network.$SECTION"
 		ifdown "$SECTION" 2>/dev/null
 		sleep 2
-		ifup "$SECTION"
+		ifup "$SECTION" 2>/dev/null
 	fi
 
 	touch "$DONEFILE"
@@ -201,6 +274,7 @@ else
 	log "modem $_m appeared"
 	ensure_enabled "$_m"
 	configure_apn_once "$_m"
+	ensure_data "$_m"
 fi
 
 # 常驻看护
@@ -209,6 +283,7 @@ while true; do
 	if [ -n "$_m" ]; then
 		ensure_enabled "$_m"
 		configure_apn_once "$_m"
+		ensure_data "$_m"
 	fi
 	sleep "$WATCH_INTERVAL"
 done
