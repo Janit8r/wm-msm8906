@@ -4,8 +4,11 @@ src-git luci https://github.com/immortalwrt/luci.git
 src-git routing https://github.com/openwrt/routing.git
 src-git telephony https://github.com/openwrt/telephony.git
 src-git video https://github.com/openwrt/video.git
-# homeproxy：ImmortalWrt 官方的代理平台（sing-box 内核），单包仓库
-src-git homeproxy https://github.com/immortalwrt/homeproxy.git
+# 注意：不要另外加 src-git homeproxy https://github.com/immortalwrt/homeproxy.git。
+# 那个独立仓库和 immortalwrt/luci 里的 applications/luci-app-homeproxy 是同一个包
+# （PKG_NAME 都是 luci-app-homeproxy），luci feed 里已经是完整源码（含 root/ htdocs/），
+# 两边同时存在会造成同名包重复定义，feeds install / 编译都会出问题。
+# 需要 homeproxy 时直接在 config 里开 CONFIG_PACKAGE_luci-app-homeproxy=y 即可。
 #src-git targets https://github.com/openwrt/targets.git
 #src-git oldpackages http://git.openwrt.org/packages.git
 #src-link custom /usr/src/openwrt/custom-feed
