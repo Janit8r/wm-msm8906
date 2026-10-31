@@ -373,8 +373,8 @@ jobs:
         cp "$GITHUB_WORKSPACE/scripts/flash-package/gpt_both0-fixed.bin" "$PKGDIR/gpt_both0-fixed.bin"
 
         # 2) 放入本次编译的镜像（CI 产物叫 system.img，刷机脚本按 rootfs.img 找）
-        cp "${{ env.FIRMWARE }}/boot.img"   "$PKGDIR/boot.img"
-        cp "${{ env.FIRMWARE }}/system.img" "$PKGDIR/rootfs.img"
+        cp "${{ env.FIRMWARE }}/immortalwrt-msm89xx-msm8916-openstick-wf2-squashfs-boot.img"   "$PKGDIR/boot.img"
+        cp "${{ env.FIRMWARE }}/immortalwrt-msm89xx-msm8916-openstick-wf2-squashfs-system.img" "$PKGDIR/rootfs.img"
 
         # 3) 放入刷机脚本 + EDL 工具 + 说明
         cp "$GITHUB_WORKSPACE"/scripts/flash-package/flash-windows.bat "$PKGDIR/"
