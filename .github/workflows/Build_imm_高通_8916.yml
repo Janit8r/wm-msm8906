@@ -387,7 +387,7 @@ jobs:
         # 4) 版本信息与校验和
         KVER=$(cat "${{ env.FIRMWARE }}"/*.manifest 2>/dev/null | sed -n 's/^kernel - \([^ ]*\).*/\1/p' | head -1)
         {
-          echo "build_time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "build_time: $(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S') (UTC+8)"
           echo "device: wf2 (XinXun WF2 / UFI-W-001, QRZL903, msm8916)"
           echo "commit: ${GITHUB_SHA}"
           echo "run: ${GITHUB_RUN_NUMBER}"

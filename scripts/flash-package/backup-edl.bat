@@ -1,50 +1,50 @@
 @echo off
 setlocal enabledelayedexpansion
-chcp 65001 >nul
+chcp 936 >nul
 cd /d "%~dp0"
-title WF2 EDL 校准分区备份
+title WF2 EDL У׼��������
 
 echo ============================================================
-echo   WF2  modem 校准分区备份（EDL / 9008 模式，只读，不改设备）
+echo   WF2  modem У׼�������ݣ�EDL / 9008 ģʽ��ֻ���������豸��
 echo ============================================================
 echo.
-echo 用途：刷机前把 modem 的 NV 校准数据单独存一份，万一刷坏了能救回来。
-echo 本脚本只做读取，不会写入任何东西。
+echo ��;��ˢ��ǰ�� modem �� NV У׼���ݵ�����һ�ݣ���һˢ�����ܾȻ�����
+echo ���ű�ֻ����ȡ������д���κζ�����
 echo.
-echo 前提：设备已进入 9008 模式。可以执行 adb reboot edl，
-echo       或者按住按键开机 / 短接测试点。
+echo ǰ�᣺�豸�ѽ��� 9008 ģʽ������ִ�� adb reboot edl��
+echo       ���߰�ס�������� / �̽Ӳ��Ե㡣
 echo.
 
 if not exist "emmcdl.exe" goto :no_tool
 if not exist "prog_emmc_firehose_8916.mbn" goto :no_tool
 
-echo 先试着用 adb 把设备切到 9008 ...
+echo �������� adb ���豸�е� 9008 ...
 adb get-state >nul 2>&1
 if not errorlevel 1 (
     adb reboot edl
-    echo 已发送 reboot edl，等 5 秒 ...
+    echo �ѷ��� reboot edl���� 5 �� ...
     timeout /t 5 /nobreak >nul
 ) else (
-    echo 没有 adb 设备，请手动让设备进入 9008 模式。
+    echo û�� adb �豸�����ֶ����豸���� 9008 ģʽ��
 )
 echo.
-echo 打开「设备管理器」，在端口(COM 和 LPT) 下面找到
+echo �򿪡��豸�����������ڶ˿�(COM �� LPT) �����ҵ�
 echo   Qualcomm HS-USB QDLoader 9008 (COMx)
-echo 把那个 x 填进来。
+echo ���Ǹ� x �������
 echo.
-set /p PORT=请输入 COM 端口号（只填数字，例如 6）:
+set /p PORT=������ COM �˿ںţ�ֻ�����֣����� 6��:
 if "%PORT%"=="" goto :cancel
 
 set OUT=cal-backup
 if not exist "%OUT%" mkdir "%OUT%"
 
 echo.
-echo 读取原厂分区表 ...
+echo ��ȡԭ�������� ...
 emmcdl.exe -p COM%PORT% -f prog_emmc_firehose_8916.mbn -MemoryName emmc -d 0 34 -o "%OUT%\gpt_stock.bin"
 if errorlevel 1 goto :fail
 
 echo.
-echo 备份 fsc / fsg / modemst1 / modemst2 ...
+echo ���� fsc / fsg / modemst1 / modemst2 ...
 emmcdl.exe -p COM%PORT% -f prog_emmc_firehose_8916.mbn -MemoryName emmc -d 284672 2    -o "%OUT%\fsc.bin"
 if errorlevel 1 goto :fail
 emmcdl.exe -p COM%PORT% -f prog_emmc_firehose_8916.mbn -MemoryName emmc -d 393280 3072 -o "%OUT%\fsg.bin"
@@ -55,31 +55,31 @@ emmcdl.exe -p COM%PORT% -f prog_emmc_firehose_8916.mbn -MemoryName emmc -d 27955
 if errorlevel 1 goto :fail
 
 echo.
-echo 备份完成，文件在 %OUT% 目录：
+echo ������ɣ��ļ��� %OUT% Ŀ¼��
 dir /b "%OUT%"
 echo.
-echo 这些文件是原厂 Android 的分区布局下的偏移量（只能在原厂系统上读）。
-echo 请连同 gpt_stock.bin 一起保存。
-echo 恢复方法（设备变砖时，把 COM6 换成实际端口）：
+echo ��Щ�ļ���ԭ�� Android �ķ��������µ�ƫ������ֻ����ԭ��ϵͳ�϶�����
+echo ����ͬ gpt_stock.bin һ�𱣴档
+echo �ָ��������豸��שʱ���� COM6 ����ʵ�ʶ˿ڣ���
 echo   emmcdl.exe -p COM6 -f prog_emmc_firehose_8916.mbn -MemoryName emmc -w modemst1 -o "%OUT%\modemst1.bin"
 echo.
 pause
 exit /b 0
 
 :no_tool
-echo [错误] 缺少 emmcdl.exe 或 prog_emmc_firehose_8916.mbn
+echo [����] ȱ�� emmcdl.exe �� prog_emmc_firehose_8916.mbn
 pause
 exit /b 1
 
 :cancel
-echo 已取消。
+echo ��ȡ����
 exit /b 0
 
 :fail
 echo.
-echo [错误] 读取失败。常见原因：
-echo   - COM 口号填错
-echo   - 设备不在 9008 模式
-echo   - 有别的工具（QFIL / miko / 官方助手）占着串口，先关掉它们
+echo [����] ��ȡʧ�ܡ�����ԭ��
+echo   - COM �ں����
+echo   - �豸���� 9008 ģʽ
+echo   - �б�Ĺ��ߣ�QFIL / miko / �ٷ����֣�ռ�Ŵ��ڣ��ȹص�����
 pause
 exit /b 1
