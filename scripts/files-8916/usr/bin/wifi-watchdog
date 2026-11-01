@@ -1,0 +1,80 @@
+#!/bin/sh
+#
+# wifi-watchdog —— wcn36xx 固件挂死自愈
+#
+# 背景（实测）：
+#   msm8916 的 WCNSS(wcn36xx) 固件在「有客户端连上来跑流量」一段时间后会挂死：
+#     - 先出现成片的 "wcn36xx: WARNING Spurious TX complete indication"
+#     - 接着客户端 "did not acknowledge authentication response"、被 deauth
+#     - 然后 TX 彻底死掉：beacon 不再发（手机搜不到 SSID），
+#       hal_delete_sta_self/hal_config_bss/hal_send_beacon 等固件命令全部超时
+#   此时 wifi down/up 或 rmmod/modprobe 都救不回来（固件实例没重启），
+#   必须把 WCNSS 的 remoteproc（a204000.remoteproc）stop/start 重新加载固件。
+#
+# 本脚本由 /etc/init.d/wifi-watchdog 用 procd 托管常驻，每 30s 巡检一次：
+#   1) hostapd 不在 -> 直接复位
+#   2) 30s 内 "Spurious TX complete" 增量 >= SPUR_LIMIT
+#      或 "did not acknowledge authentication" 增量 >= AUTH_LIMIT
+#      -> 判定固件挂死，复位 WCNSS
+# 复位动作：wifi down -> rmmod wcn36xx -> remoteproc stop/start -> modprobe -> wifi up
+#
+# 只动 WCNSS（WiFi）的 remoteproc，不动 4080000.remoteproc（modem），不影响上网。
+
+INTERVAL=${INTERVAL:-30}
+SPUR_LIMIT=${SPUR_LIMIT:-30}
+AUTH_LIMIT=${AUTH_LIMIT:-10}
+
+log() { logger -t wifi-watchdog "$*"; }
+
+count_spur() { logread 2>/dev/null | grep -c "Spurious TX complete"; }
+count_auth() { logread 2>/dev/null | grep -c "did not acknowledge authentication"; }
+
+reset_wifi() {
+	log "hang detected ($1), resetting WCNSS"
+	wifi down 2>/dev/null
+	sleep 2
+	rmmod wcn36xx 2>/dev/null
+	sleep 1
+	for r in /sys/class/remoteproc/remoteproc*; do
+		[ "$(cat "$r/name" 2>/dev/null)" = "a204000.remoteproc" ] || continue
+		echo stop > "$r/state" 2>/dev/null
+		sleep 1
+		echo start > "$r/state" 2>/dev/null
+		sleep 3
+	done
+	modprobe wcn36xx 2>/dev/null
+	sleep 3
+	wifi up 2>/dev/null
+	sleep 5
+	log "wcnss reset done"
+}
+
+# 首次基线（避免把历史日志当成一次挂死）
+prev_s=$(count_spur)
+prev_a=$(count_auth)
+
+while :; do
+	sleep "$INTERVAL"
+
+	# 1) hostapd 挂了（崩溃/被 OOM 杀）直接复位
+	if ! ps 2>/dev/null | grep -q "[h]ostapd"; then
+		reset_wifi "hostapd not running"
+		prev_s=$(count_spur)
+		prev_a=$(count_auth)
+		continue
+	fi
+
+	s=$(count_spur)
+	a=$(count_auth)
+	ds=$((s - prev_s)); [ "$ds" -lt 0 ] && ds=0
+	da=$((a - prev_a)); [ "$da" -lt 0 ] && da=0
+	prev_s=$s
+	prev_a=$a
+
+	if [ "$ds" -ge "$SPUR_LIMIT" ] || [ "$da" -ge "$AUTH_LIMIT" ]; then
+		reset_wifi "spurious=$ds authfail=$da"
+		# 复位后重新基线：复位过程本身也会产生一些 spurious 日志
+		prev_s=$(count_spur)
+		prev_a=$(count_auth)
+	fi
+done

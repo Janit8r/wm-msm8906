@@ -11,4 +11,7 @@ chmod +x /etc/init.d/sta_wifi
 chmod +x /usr/bin/wan-led-worker
 chmod +x /etc/init.d/wan-led
 /etc/init.d/wan-led enable
+chmod +x /usr/bin/wifi-watchdog
+chmod +x /etc/init.d/wifi-watchdog
+/etc/init.d/wifi-watchdog enable
 exit 0
