@@ -8,4 +8,7 @@ chmod +x /etc/init.d/swapfile
 /etc/init.d/swapfile enable
 chmod +x /etc/init.d/sta_wifi
 /etc/init.d/sta_wifi enable
+chmod +x /usr/bin/wan-led-worker
+chmod +x /etc/init.d/wan-led
+/etc/init.d/wan-led enable
 exit 0

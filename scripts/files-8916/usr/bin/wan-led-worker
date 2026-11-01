@@ -1,0 +1,62 @@
+#!/bin/sh
+#
+# wan-led-worker —— 上网状态指示灯（由 /etc/init.d/wan-led 通过 procd 托管常驻）
+#
+# 行为：
+#   上网成功  -> red:power 灭、green:wan 亮（绿）
+#   断网/未连上 -> green:wan 灭、red:power 亮（红）
+#
+# 为什么不用内核 LED trigger：
+#   本机 LED 只有 timer/heartbeat/netdev 之类的通用 trigger，没有"是否真的能上网"
+#   这种 trigger；而 wwan0 由 simadmin-data 用 qmicli 直接管理、不走 netifd，
+#   也没有可靠的 ifup/ifdown 事件可挂。所以只能自己探测真实连通性。
+#
+# 探测方式：
+#   每 INTERVAL 秒 ping 一次两个不同运营商的公共 DNS，任一可达即判在线。
+#   连续 FAIL_LIMIT 次失败才判离线（防抖：丢一两个包不会让灯乱闪）。
+#
+# 说明：红灯原来是 heartbeat（闪烁），这里改成常亮，一眼能区分"红=没网 / 绿=有网"。
+
+RED=/sys/class/leds/red:power
+GREEN=/sys/class/leds/green:wan
+
+INTERVAL=${INTERVAL:-10}
+FAIL_LIMIT=${FAIL_LIMIT:-3}
+PING_TARGETS=${PING_TARGETS:-"223.5.5.5 114.114.114.114"}
+
+# 设置某个 LED：先清 trigger（否则 brightness 被 trigger 覆盖不生效），再写亮度
+led_set() {
+	[ -d "$1" ] || return 0
+	echo none > "$1/trigger" 2>/dev/null
+	echo "$2" > "$1/brightness" 2>/dev/null
+}
+
+online() {
+	for t in $PING_TARGETS; do
+		ping -c 1 -W 2 "$t" >/dev/null 2>&1 && return 0
+	done
+	return 1
+}
+
+state=""
+fails=0
+while :; do
+	if online; then
+		fails=0
+		if [ "$state" != "up" ]; then
+			led_set "$RED" 0
+			led_set "$GREEN" 1
+			state=up
+			logger -t wan-led "online: green on, red off"
+		fi
+	else
+		fails=$((fails + 1))
+		if [ "$state" != "down" ] && [ "$fails" -ge "$FAIL_LIMIT" ]; then
+			led_set "$GREEN" 0
+			led_set "$RED" 1
+			state=down
+			logger -t wan-led "offline: red on, green off (fails=$fails)"
+		fi
+	fi
+	sleep "$INTERVAL"
+done
