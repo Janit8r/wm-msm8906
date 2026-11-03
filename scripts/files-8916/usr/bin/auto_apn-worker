@@ -259,7 +259,21 @@ ensure_online() {
 	_n=$((_n + 1))
 
 	if [ "$_n" -ge 3 ]; then
-		log "no internet for $((_n * WATCH_INTERVAL))s despite IPv4, redialing network.$SECTION"
+		# 联通有 wonet / 3gnet 两个可用 APN，部分省份老套餐只开了其中一个。
+		# 连续 90s 有 IP 但上不了网时，在两者之间来回切一次做兜底。
+		_cur=$(uci -q get "network.$SECTION.apn")
+		case "$_cur" in
+			wonet)  _next=3gnet ;;
+			3gnet)  _next=wonet ;;
+			*)      _next="" ;;
+		esac
+		if [ -n "$_next" ]; then
+			log "no internet for $((_n * WATCH_INTERVAL))s, switching APN $_cur -> $_next"
+			uci -q set "network.$SECTION.apn=$_next"
+			uci -q commit network
+		else
+			log "no internet for $((_n * WATCH_INTERVAL))s despite IPv4, redialing network.$SECTION"
+		fi
 		echo 0 > "$OFFLINEF"
 		ifdown "$SECTION" 2>/dev/null
 		sleep 2
