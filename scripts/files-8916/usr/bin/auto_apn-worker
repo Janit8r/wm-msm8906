@@ -308,7 +308,7 @@ configure_apn_once() {
 
 	case $_code in
 		46000|46002|46004|46007|46008) _apn=cmnet;  _auth="none"; _user="";                 _pass="" ;;
-		46001|46006|46009)             _apn=3gnet;  _auth="none"; _user="";                 _pass="" ;;
+		46001|46006|46009)             _apn=wonet;  _auth="none"; _user="";                 _pass="" ;;
 		46003|46011|46012)             _apn=ctnet;  _auth="both"; _user="ctnet@mycdma.cn"; _pass="vnet.mobi" ;;
 		46015|46022|46123)             _apn=cbnet;  _auth="none"; _user="";                 _pass="" ;;
 		*)
