@@ -1,0 +1,81 @@
+#!/bin/sh
+#
+# portal-watch —— 监听 WiFi 客户端上下线，维护强制门户的 blocked / allowed 集合
+#
+# 核心行为：
+#   new station -> 把 MAC 加进 blocked（除非已在 allowed 或白名单）
+#   del station -> 把 MAC 从 blocked / allowed 一起删掉
+#
+# 第二条是关键：客户端一旦断开，授权立刻失效，
+# 所以「每次重新连接这个 WiFi 都会重新弹门户」。
+#
+# 用 `iw event` 而不是定时轮询：事件是实时的，手机重连后 1 秒内就能拦住，
+# 轮询最短也要几秒，中间会漏一段能上网的窗口。
+
+IFACE="${WIFI_IFACE:-phy0-ap0}"
+
+log() { logger -t captive-portal "$*"; }
+
+valid_mac() {
+	printf '%s' "$1" | grep -qiE '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'
+}
+
+is_whitelisted() {
+	[ -f /etc/portal-whitelist ] || return 1
+	grep -qiF "$1" /etc/portal-whitelist 2>/dev/null
+}
+
+in_set() {
+	nft get element inet portal "$1" "{ $2 }" >/dev/null 2>&1
+}
+
+block_mac() {
+	valid_mac "$1" || return 0
+	is_whitelisted "$1" && return 0
+	in_set allowed "$1" && return 0
+	in_set blocked "$1" && return 0
+	if nft add element inet portal blocked "{ $1 }" 2>/dev/null; then
+		log "block $1"
+	fi
+}
+
+revoke_mac() {
+	valid_mac "$1" || return 0
+	nft delete element inet portal blocked "{ $1 }" 2>/dev/null
+	if nft delete element inet portal allowed "{ $1 }" 2>/dev/null; then
+		log "revoke $1 (disconnected)"
+	else
+		log "revoke $1"
+	fi
+}
+
+sync_stations() {
+	for _m in $(iw dev "$IFACE" station dump 2>/dev/null | awk '/Station/{print $2}'); do
+		block_mac "$_m"
+	done
+}
+
+# 等无线接口就绪（最多 120s）
+_i=0
+while [ "$_i" -lt 60 ]; do
+	iw dev "$IFACE" info >/dev/null 2>&1 && break
+	_i=$((_i + 1))
+	sleep 2
+done
+
+sync_stations
+log "watcher started on $IFACE"
+
+while :; do
+	iw event -t 2>/dev/null | while read -r line; do
+		_m=$(printf '%s' "$line" | grep -oiE '([0-9a-f]{2}:){5}[0-9a-f]{2}' | head -n 1)
+		[ -n "$_m" ] || continue
+		case "$line" in
+			*"new station"*) block_mac "$_m" ;;
+			*"del station"*) revoke_mac "$_m" ;;
+		esac
+	done
+	# iw event 退出（接口重启 / 驱动复位）后重新同步再继续
+	sleep 2
+	sync_stations
+done
