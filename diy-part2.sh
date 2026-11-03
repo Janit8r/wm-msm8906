@@ -18,9 +18,20 @@ cp -r "$GITHUB_WORKSPACE/scripts/files-8916" "$GITHUB_WORKSPACE/openwrt/files"
 ls -R "$GITHUB_WORKSPACE/openwrt/files"
 
 # 保证可执行位（git 在 Windows 上容易把 100755 丢成 100644，procd 会因此无法 exec）
+#
+# 注意 etc/uci-defaults 也要加：OpenWrt 的 uci-defaults 执行器只跑可执行文件，
+# 权限是 644 时会被静默跳过 —— 上一版就是这样把 zz-modem-data 丢掉的，
+# 结果 network.modem 段根本没被创建，整机没有数据连接。
 chmod +x "$GITHUB_WORKSPACE/openwrt/files/etc/init.d/"* 2>/dev/null
+chmod +x "$GITHUB_WORKSPACE/openwrt/files/etc/uci-defaults/"* 2>/dev/null
 chmod +x "$GITHUB_WORKSPACE/openwrt/files/usr/bin/"* 2>/dev/null
-ls -l "$GITHUB_WORKSPACE/openwrt/files/etc/init.d/" "$GITHUB_WORKSPACE/openwrt/files/usr/bin/" 2>/dev/null
+chmod +x "$GITHUB_WORKSPACE/openwrt/files/usr/sbin/"* 2>/dev/null
+chmod +x "$GITHUB_WORKSPACE/openwrt/files/usr/libexec/simadmin/"* 2>/dev/null
+chmod +x "$GITHUB_WORKSPACE/openwrt/files/etc/hotplug.d/iface/"* 2>/dev/null
+ls -l "$GITHUB_WORKSPACE/openwrt/files/etc/init.d/" "$GITHUB_WORKSPACE/openwrt/files/etc/uci-defaults/" "$GITHUB_WORKSPACE/openwrt/files/usr/bin/" 2>/dev/null
+
+# 兜底：任何带 shebang 的脚本都补上可执行位
+find "$GITHUB_WORKSPACE/openwrt/files" -type f -exec sh -c 'head -c 2 "$1" | grep -q "#!" && chmod 0755 "$1"' _ {} \; 2>/dev/null || true
 
 
 # 压制 GCC 14 类型错误
