@@ -59,6 +59,11 @@ WATCH_INTERVAL=30
 # 连续多少轮 "enabled 但未注册" 后做一次 reset（8 x 30s = 240s）
 STUCK_LIMIT=8
 
+# 开机阶段 ModemManager 可能漏掉模组（模组崩溃重启后端口重新 attach，
+# MM 只在启动时扫一次），最多重启它几次；模组回来就重置计数。
+MM_RESTART_MAX=3
+_mm_restarts=0
+
 log() {
 	logger -t auto-apn "$1"
 }
@@ -87,6 +92,20 @@ wait_modem() {
 			return 0
 		fi
 		_i=$((_i + 1))
+
+		# ModemManager 只在启动时扫一次设备。实测本模组开机时 MSS 固件会
+		# "Watchdog detects stalled initialization" 崩几次，wwan 端口重新 attach
+		# 之后 MM 不会再看一眼，于是永远 "No modems were found"，
+		# 表现就是「模组明明在、系统就是没数据」。
+		# 这里每 90 秒重启一次 MM，最多 3 次（重启后索引会变，后面会自动对齐）。
+		if [ $((_i % 45)) -eq 0 ] && [ "$_mm_restarts" -lt "$MM_RESTART_MAX" ]; then
+			_mm_restarts=$((_mm_restarts + 1))
+			log "modem not visible to ModemManager, restarting it (try $_mm_restarts/$MM_RESTART_MAX)"
+			/etc/init.d/modemmanager restart >/dev/null 2>&1
+			sleep 10
+			continue
+		fi
+
 		sleep "$WAIT_INTERVAL"
 	done
 	return 1
@@ -374,10 +393,19 @@ fi
 while true; do
 	_m=$(modem_index)
 	if [ -n "$_m" ]; then
+		_mm_restarts=0
 		ensure_enabled "$_m"
 		configure_apn_once "$_m"
 		ensure_data "$_m"
 		ensure_online
+	else
+		# 运行中模组掉线（驱动复位 / remoteproc 重启）也要把 MM 叫回来
+		if [ "$_mm_restarts" -lt "$MM_RESTART_MAX" ]; then
+			_mm_restarts=$((_mm_restarts + 1))
+			log "modem disappeared from ModemManager, restarting it (try $_mm_restarts/$MM_RESTART_MAX)"
+			/etc/init.d/modemmanager restart >/dev/null 2>&1
+			sleep 10
+		fi
 	fi
 	sleep "$WATCH_INTERVAL"
 done
