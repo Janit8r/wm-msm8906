@@ -1,0 +1,61 @@
+#!/bin/sh
+#
+# 门户登录处理（CGI）
+#
+# 流程：拿到客户端 IP -> 查 ARP/DHCP 得到 MAC -> 把 MAC 从 blocked 挪到 allowed
+#       -> 302 跳转到 Instagram 主页
+#
+# 为什么用 MAC 而不是 IP：
+#   nftables 的 forward 链在桥接转发时看到的是原始以太网头，按 ether saddr 匹配
+#   最直接；而且客户端重新连 WiFi 时 DHCP 可能换 IP，MAC 不会变。
+#
+# 安全：
+#   只接受形如 aa:bb:cc:dd:ee:ff 的 MAC 才拼进 nft 命令，避免任意字符串注入。
+
+IG_URL="https://www.instagram.com/dr.crab.zuzz?obrf=ZHIwdW90bzJ2OHB3&utm_source=qr"
+PORTAL_HOST="192.168.10.1:8080"
+
+log() { logger -t captive-portal "$*"; }
+
+ip="${REMOTE_ADDR:-}"
+
+# uhttpd 可能给出 IPv4-mapped IPv6
+case "$ip" in
+	::ffff:*) ip="${ip#::ffff:}" ;;
+esac
+
+mac=""
+if [ -n "$ip" ]; then
+	# 先查邻居表（客户端刚连上时通常已经有条目）
+	mac=$(ip neigh show "$ip" 2>/dev/null | awk '{print $5}' | head -n 1)
+	# 回落到 DHCP 租约表
+	if [ -z "$mac" ]; then
+		mac=$(awk -v ip="$ip" '$3 == ip { print $2; exit }' /tmp/dhcp.leases 2>/dev/null)
+	fi
+fi
+
+# 严格校验，防止把任意字符串塞进 nft 规则
+if ! printf '%s' "$mac" | grep -qiE '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'; then
+	mac=""
+fi
+
+if [ -n "$mac" ]; then
+	nft delete element inet portal blocked "{ $mac }" 2>/dev/null
+	nft add element inet portal allowed "{ $mac }" 2>/dev/null
+	log "login ok mac=$mac ip=$ip"
+else
+	log "login FAILED ip=${ip:-unknown} (no mac resolved)"
+fi
+
+cat <<EOF
+Status: 302 Found
+Location: $IG_URL
+Cache-Control: no-store, no-cache, must-revalidate
+Pragma: no-cache
+Content-Type: text/html; charset=utf-8
+
+<!doctype html><meta charset="utf-8">
+<title>Redirecting…</title>
+<meta http-equiv="refresh" content="0;url=$IG_URL">
+<p>正在跳转… <a href="$IG_URL">继续 / Continue</a></p>
+EOF
