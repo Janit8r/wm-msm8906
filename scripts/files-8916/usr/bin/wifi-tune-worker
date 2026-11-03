@@ -1,0 +1,74 @@
+#!/bin/sh
+#
+# wifi-tune-worker —— 由 /etc/init.d/wifi-tune 用 procd 托管，开机调一次无线参数
+#
+# 为什么不在 init 脚本的 start() 里直接做：
+#   实测 S99 阶段 /etc/config/wireless 可能还没生成（首次启动由 wifi config
+#   补齐），config_load 拿不到 wifi-device 段，改了也是白改 —— 上一版就是这么
+#   静默失效的（配置里一直是 country=US、channel=11）。这里等配置和接口都
+#   就绪再动手。
+#
+# 调什么、为什么：
+#   country=CN        世界域(00)会把功率压到 20dBm 且可用信道变少
+#   txpower=25        wcn3620 驱动/NV 校准的真实上限就是 25dBm，26~40 会被 clamp
+#   channel=4         实测现场 1/6/9/11 都有 -47~-62dBm 的邻居，
+#                     ch4(2427MHz) 最干净；2.4G 只有 1/6/11 不重叠，
+#                     但 1 和 11 现场都很挤，4 反而是最优解
+#   htmode=HT20       本机是 1x1 11n（MCS0-7，72Mbps 上限）。
+#                     HT40 在 2.4G 会和邻道重叠，实测反而更慢，保持 HT20
+#   cell_density=3    管理帧/广播用高速率基本集，少占空口
+#   noscan=1          关掉后台重叠 BSS 扫描，避免周期性卡顿
+#   power_save=off    uci 没有这个选项，只能在接口起来之后用 iw 补一刀
+
+COUNTRY=CN
+TXPOWER=25
+CHANNEL=4
+HTMODE=HT20
+CELL_DENSITY=3
+
+log() { logger -t wifi-tune "$*"; }
+
+wifi_devs() { iw dev 2>/dev/null | awk '/Interface/{print $2}'; }
+
+# 等 /etc/config/wireless 里出现 wifi-device 段，最多 120s
+i=0
+while [ "$i" -lt 60 ]; do
+	[ -f /etc/config/wireless ] && uci -q show wireless 2>/dev/null | grep -q '=wifi-device' && break
+	i=$((i + 1))
+	sleep 2
+done
+
+CHANGED=0
+for s in $(uci -q show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+	[ "$(uci -q get "wireless.$s.country")" = "$COUNTRY" ] || {
+		uci -q set "wireless.$s.country=$COUNTRY"; CHANGED=1; }
+	[ "$(uci -q get "wireless.$s.txpower")" = "$TXPOWER" ] || {
+		uci -q set "wireless.$s.txpower=$TXPOWER"; CHANGED=1; }
+	[ "$(uci -q get "wireless.$s.channel")" = "$CHANNEL" ] || {
+		uci -q set "wireless.$s.channel=$CHANNEL"; CHANGED=1; }
+	[ "$(uci -q get "wireless.$s.htmode")" = "$HTMODE" ] || {
+		uci -q set "wireless.$s.htmode=$HTMODE"; CHANGED=1; }
+	[ "$(uci -q get "wireless.$s.cell_density")" = "$CELL_DENSITY" ] || {
+		uci -q set "wireless.$s.cell_density=$CELL_DENSITY"; CHANGED=1; }
+	[ "$(uci -q get "wireless.$s.noscan")" = "1" ] || {
+		uci -q set "wireless.$s.noscan='1'"; CHANGED=1; }
+done
+
+if [ "$CHANGED" = "1" ]; then
+	uci -q commit wireless
+	log "wireless config updated (country=$COUNTRY txpower=${TXPOWER}dBm ch=$CHANNEL $HTMODE cell_density=$CELL_DENSITY), reloading"
+	wifi reload >/dev/null 2>&1
+	i=0
+	while [ "$i" -lt 20 ]; do
+		[ -n "$(wifi_devs)" ] && break
+		i=$((i + 1))
+		sleep 1
+	done
+fi
+
+for d in $(wifi_devs); do
+	iw dev "$d" set power_save off 2>/dev/null
+done
+
+log "applied: country=$COUNTRY txpower=${TXPOWER}dBm ch=$CHANNEL $HTMODE cell_density=$CELL_DENSITY power_save=off"
+exit 0
