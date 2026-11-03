@@ -24,7 +24,8 @@ STOP=10
 PORTAL_ROOT=/usr/share/captive-portal
 PORTAL_PORT=8080
 LAN_IFACE="${PORTAL_LAN_IFACE:-br-lan}"
-WIFI_IFACE="${PORTAL_WIFI_IFACE:-phy0-ap0}"
+# 留空则由 portal-watch 按 "type AP" 自动识别无线接口
+WIFI_IFACE="${PORTAL_WIFI_IFACE:-}"
 
 log() { logger -t captive-portal "$*"; }
 
