@@ -1,0 +1,24 @@
+#!/bin/sh
+#
+# SimAdmin 首次启动初始化。
+#
+# 只做 simadmin 自己的事，**不碰 network / firewall**。
+#
+# 厂商原版（官方 VoLTE 包里的 99-simadmin）会执行：
+#     uci -q delete network.modem
+#     uci -q del_list firewall.@zone[1].network='modem'
+#     /etc/init.d/qmi_auto_activate disable
+# 本固件的数据连接交给 netifd 的 modemmanager proto 管
+# （见 files-8916/etc/uci-defaults/zz-modem-data 里的说明），
+# 删掉 network.modem 会直接把数据连接弄坏，所以这里全部裁掉。
+#
+# 也不启用 simadmin-watchdog / simadmin-imsd：
+#   前者会 rebind 模组驱动，和本固件已有的 wifi-watchdog / auto_apn 职责重叠；
+#   后者是 IMS 健康监控，VoLTE 关闭时没有意义。
+# 短信收发只依赖 /etc/init.d/simadmin 这一个服务。
+
+mkdir -p /opt/simadmin/data
+
+/etc/init.d/simadmin enable
+
+exit 0

@@ -9,3 +9,6 @@ scripts/flash-package/README.txt text eol=crlf
 
 # 其余 shell 脚本一律 LF
 *.sh text eol=lf
+
+# files/ 覆盖层里的 init 脚本、shim 没有 .sh 后缀，显式指定 LF
+scripts/files-8916/** text eol=lf

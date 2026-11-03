@@ -71,3 +71,20 @@ else
 fi
 
 
+
+# ---- SimAdmin 预编译二进制（UPX 压缩）+ 前端 ----
+# 二进制不随仓库提交（8MB+），构建时从 luci-app-simadmin 的滚动 Release 拉取。
+bash "$GITHUB_WORKSPACE/scripts/install-simadmin-prebuilt.sh" "$GITHUB_WORKSPACE/openwrt/files"
+
+# 没有二进制就别继续了——否则会静默产出一个没有 simadmin 的固件
+if [ ! -x "$GITHUB_WORKSPACE/openwrt/files/opt/simadmin/simadmin" ]; then
+	echo "::error::SimAdmin 预编译二进制缺失，固件将不含 simadmin，终止构建"
+	exit 1
+fi
+
+# files/ 覆盖层里的脚本必须带可执行位，否则 procd 拉不起来
+chmod +x "$GITHUB_WORKSPACE/openwrt/files/opt/simadmin/start.sh" 2>/dev/null
+chmod +x "$GITHUB_WORKSPACE/openwrt/files/etc/init.d/"* 2>/dev/null
+chmod +x "$GITHUB_WORKSPACE/openwrt/files/usr/bin/"* 2>/dev/null
+chmod +x "$GITHUB_WORKSPACE/openwrt/files/usr/libexec/simadmin/"* 2>/dev/null
+ls -l "$GITHUB_WORKSPACE/openwrt/files/opt/simadmin/"
