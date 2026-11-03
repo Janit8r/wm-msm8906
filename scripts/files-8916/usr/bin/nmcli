@@ -56,6 +56,31 @@ exists() {
 	[ -f "$(pfile "$1")" ]
 }
 
+# 本固件没有 NetworkManager，数据连接由 netifd 的 network.modem 段管。
+# 但 simadmin 后端的数据看护逻辑是按 NM 写的（nmcli connection show 找 gsm profile），
+# 找不到就每轮刷一条 "no gsm connection profile found in NetworkManager"。
+# 这里用 network.modem 的配置合成一个等价 profile，让后端看到一致的状态。
+bootstrap_profile() {
+	for _f in "$STATE"/*.profile; do
+		[ -f "$_f" ] && return 0
+	done
+	[ "$(uci -q get network.modem)" = "interface" ] || return 0
+	mkdir -p "$STATE" 2>/dev/null
+	_f=$(pfile modem)
+	: > "$_f"
+	pset "$_f" name modem
+	pset "$_f" type gsm
+	pset "$_f" uuid "$(cat /proc/sys/kernel/random/uuid 2>/dev/null)"
+	pset "$_f" apn "$(uci -q get network.modem.apn)"
+	pset "$_f" username "$(uci -q get network.modem.username)"
+	pset "$_f" password "$(uci -q get network.modem.password)"
+	pset "$_f" homeonly yes
+	pset "$_f" autoconnect yes
+	pset "$_f" active yes
+}
+
+bootstrap_profile
+
 modem_connected() {
 	id=$(modem_id)
 	[ -n "$id" ] || return 1
