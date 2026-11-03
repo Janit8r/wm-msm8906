@@ -1,0 +1,9 @@
+#!/bin/sh
+#
+# 强制门户默认开启。
+# 关掉：/etc/init.d/captive-portal disable && /etc/init.d/captive-portal stop
+# 白名单（不弹门户的设备）：把 MAC 一行一个写进 /etc/portal-whitelist
+
+/etc/init.d/captive-portal enable
+
+exit 0
