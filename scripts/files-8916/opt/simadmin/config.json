@@ -84,7 +84,7 @@
   "roaming_allowed": true,
   "data_enabled": false,
   "apn": {
-    "apn": "ctnet",
+    "apn": "3gnet",
     "protocol": "ipv4",
     "username": "",
     "password": "",
