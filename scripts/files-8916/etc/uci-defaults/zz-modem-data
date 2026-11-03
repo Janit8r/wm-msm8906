@@ -1,32 +1,41 @@
 #!/bin/sh
 #
-# zz-modem-data —— 修「modem 注册成功但没有 IP / 不能上网」
+# zz-modem-data —— 建立 netifd 的 modem 接口（本固件数据连接的唯一入口）
 #
-# 现象：
-#   mmcli 里 state=registered、packet service=attached、operator 也正常，
-#   但 wwan0 只有 link-local IPv6，没有 IPv4、没有默认路由，整机不能上网。
+# 为什么必须有这个文件：
+#   本固件把数据连接完全交给 netifd 的 modemmanager proto：由它调
+#   mmcli --simple-connect 建 bearer，并把 IPv4 / 默认路由 / MTU / DNS
+#   写到 wwan0 上。没有 interface 段 netifd 就不会去拨号，表现是
+#   「modem registered + packet-service attached，但 wwan0 没有 IPv4、
+#   整机不能上网」。
 #
-# 根因：
-#   /rom/etc/uci-defaults/99-simadmin 把 network.modem 设成 disabled=1
-#   （simadmin 想让 netifd 别碰 modem，它自己用 QMI/VoLTE 管 IMS bearer）。
-#   随后的 openstick_tweak 只补了 autoconnect=1 / auto=1，没有清 disabled，
-#   于是 netifd 永远不启用这个接口：
-#     - ifstatus modem -> "Interface modem not found"
-#     - mmcli 里没有 default bearer，只有 initial bearer
-#     - 没人把 bearer 的 IP/网关写到 wwan0 上
+#   容易踩的坑：段不存在时 `uci set network.modem.apn=3gnet` 会建出一个
+#   `config modem 'modem'`（类型等于段名），netifd 不认这种段，
+#   看起来配置写进去了、实际上永远不生效。所以这里显式写 `=interface`。
 #
-# 实测：
-#   清掉 disabled、让 netifd 的 modemmanager proto 接管后，IP、默认路由、
-#   MTU(1432)、DNS 全部由 netifd 自动配好，firewall 的 wan zone（含 wwan0
-#   与 network 'modem'，masq=1）也是现成的，LAN 侧直接能上网。
+#   /etc/init.d/auto_apn 的 worker 只负责按 IMSI 改 APN 选项再 ifup，
+#   不负责建段 —— 段必须在这里建好。
 #
-# 命名：
-#   用 zz- 前缀保证在 openstick_tweak（字母序 o < z）之后执行，
-#   否则会被 openstick_tweak 的 uci 操作顺序覆盖。
+# 命名用 zz- 前缀，保证在 openstick_tweak 之后执行。
 
-uci -q set network.modem.disabled='0'
-uci -q set network.modem.autoconnect='1'
-uci -q set network.modem.auto='1'
-uci -q commit network
+uci -q batch <<-EOF
+	set network.modem=interface
+	set network.modem.proto='modemmanager'
+	set network.modem.device='0'
+	set network.modem.iptype='ipv4'
+	set network.modem.metric='10'
+	set network.modem.peerdns='1'
+	set network.modem.disabled='0'
+	set network.modem.autoconnect='1'
+	commit network
+EOF
+
+# 官方 simadmin 包留下的三个旧脚本会自启：simadmin-data 用裸 QMI WDS 抢数据面
+# （本模组实测会被写进崩溃循环），simadmin-imsd / simadmin-watchdog 会 rebind
+# 模组驱动。短信收发只依赖 /etc/init.d/simadmin，这三个一律关掉。
+for s in simadmin-data simadmin-imsd simadmin-watchdog; do
+	[ -x "/etc/init.d/$s" ] && "/etc/init.d/$s" disable 2>/dev/null
+	[ -x "/etc/init.d/$s" ] && "/etc/init.d/$s" stop 2>/dev/null
+done
 
 exit 0
