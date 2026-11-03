@@ -84,7 +84,7 @@
   "roaming_allowed": true,
   "data_enabled": false,
   "apn": {
-    "apn": "3gnet",
+    "apn": "wonet",
     "protocol": "ipv4",
     "username": "",
     "password": "",
