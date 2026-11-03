@@ -4,6 +4,13 @@
 # Modify default IP
 sed -i 's/192.168.1.1/192.168.10.1/g' package/base-files/files/bin/config_generate
 
+# 主机名固定为 ChinaUnicomPocketWiFi。
+# config_generate 的 generate_static_system() 里写死了 hostname='ImmortalWrt'，
+# 首次开机 / 恢复出厂时会用它重写 /etc/config/system，所以必须改生成器本身，
+# 只往 files/ 里塞 /etc/config/system 是没用的（会被 delete + add 覆盖掉）。
+sed -i "s/hostname='ImmortalWrt'/hostname='ChinaUnicomPocketWiFi'/" package/base-files/files/bin/config_generate
+grep -q "hostname='ChinaUnicomPocketWiFi'" package/base-files/files/bin/config_generate && echo "✓ hostname 已固定" || echo "✗ hostname 修改失败"
+
 # eth0
 sed -i "s/ucidef_set_interface_lan 'eth0'/ucidef_set_interface_lan 'br-lan'/" package/base-files/files/etc/board.d/99-default_network
 
