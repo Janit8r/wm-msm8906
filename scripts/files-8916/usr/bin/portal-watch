@@ -12,9 +12,21 @@
 # 用 `iw event` 而不是定时轮询：事件是实时的，手机重连后 1 秒内就能拦住，
 # 轮询最短也要几秒，中间会漏一段能上网的窗口。
 
-IFACE="${WIFI_IFACE:-phy0-ap0}"
+IFACE="${WIFI_IFACE:-}"
 
 log() { logger -t captive-portal "$*"; }
+
+# 接口名不写死：不同固件/机型可能是 phy0-ap0 / wlan0 / wlan1-1 等，
+# 统一按 "type AP" 找当前在跑的那个。
+detect_iface() {
+	for _d in $(iw dev 2>/dev/null | awk '/Interface/{print $2}'); do
+		if iw dev "$_d" info 2>/dev/null | grep -q 'type AP'; then
+			echo "$_d"
+			return 0
+		fi
+	done
+	return 1
+}
 
 valid_mac() {
 	printf '%s' "$1" | grep -qiE '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'
@@ -55,13 +67,23 @@ sync_stations() {
 	done
 }
 
-# 等无线接口就绪（最多 120s）
+# 等无线接口就绪（最多 120s）；没指定或指定的不存在就自动识别
 _i=0
 while [ "$_i" -lt 60 ]; do
-	iw dev "$IFACE" info >/dev/null 2>&1 && break
+	if [ -n "$IFACE" ] && iw dev "$IFACE" info >/dev/null 2>&1; then
+		break
+	fi
+	IFACE=$(detect_iface)
+	[ -n "$IFACE" ] && break
 	_i=$((_i + 1))
 	sleep 2
 done
+
+if [ -z "$IFACE" ]; then
+	log "no AP interface found, retry in 60s"
+	sleep 60
+	exec "$0"
+fi
 
 sync_stations
 log "watcher started on $IFACE"
