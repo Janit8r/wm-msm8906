@@ -38,4 +38,16 @@ for s in simadmin-data simadmin-imsd simadmin-watchdog; do
 	[ -x "/etc/init.d/$s" ] && "/etc/init.d/$s" stop 2>/dev/null
 done
 
+# qmi_auto_activate 常驻一个 `qmicli -d /dev/wwan0qmi0 --uim-monitor-refresh-all`，
+# 长期独占 QMI 通道，和 ModemManager 抢端口。实测开机阶段会把 MSS 固件打进
+# "Watchdog detects stalled initialization" 崩溃循环（一次开机崩 9 次，每 ~41s 一次），
+# 崩溃后 ModemManager 的 D-Bus 索引还会从 Modem/0 变成 Modem/1。
+# MM 1.24 自带 SIM 热插拔监控，不需要它。
+[ -x /etc/init.d/qmi_auto_activate ] && /etc/init.d/qmi_auto_activate disable 2>/dev/null
+[ -x /etc/init.d/qmi_auto_activate ] && /etc/init.d/qmi_auto_activate stop 2>/dev/null
+
+# ModemManager 出厂是 DEBUG 级日志 + 落盘 /var/log/mm.log，每条 QMI 交互都写一次，
+# msm8916 上这部分开销不可忽略，改回 INFO。
+sed -i 's/^LOG_LEVEL="DEBUG"/LOG_LEVEL="INFO"/' /etc/init.d/modemmanager 2>/dev/null
+
 exit 0
