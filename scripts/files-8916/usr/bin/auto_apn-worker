@@ -184,6 +184,19 @@ ensure_data() {
 		uci -q commit network
 	fi
 
+	# modem 崩溃后 remoteproc 会重新加载，ModemManager 的 D-Bus 索引跟着变
+	# （Modem/0 -> Modem/1）。device 写死的话 ifup 会一直报 "No device specified"，
+	# 表现为「模组明明在、就是没 IP」。这里每轮对齐一次索引。
+	_dev=$(uci -q get "network.$SECTION.device")
+	if [ "$_dev" != "$_m" ]; then
+		log "modem index changed (${_dev:-none} -> $_m), updating network.$SECTION.device"
+		uci -q set "network.$SECTION.device=$_m"
+		uci -q commit network
+		ifdown "$SECTION" >/dev/null 2>&1
+		sleep 1
+		ifup "$SECTION" >/dev/null 2>&1
+	fi
+
 	# 已经拿到 IPv4 就没事
 	if ip -4 addr show wwan0 2>/dev/null | grep -q 'inet '; then
 		rm -f "$NOIPF"
