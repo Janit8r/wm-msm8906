@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<title>WiFi 登录 · Connect to Internet</title>
+<style>
+  :root{
+    --ig:#ee2a7b;
+    --wa:#25d366;
+    --ink:#0b0d12;
+    --muted:rgba(255,255,255,.62);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;min-height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Roboto,sans-serif;
+    background:var(--ink);
+    color:#fff;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:22px 16px calc(22px + env(safe-area-inset-bottom));
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  .bg{
+    position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:
+      radial-gradient(760px 460px at 12% -8%, rgba(238,42,123,.42), transparent 62%),
+      radial-gradient(680px 460px at 96% 6%, rgba(98,40,215,.42), transparent 62%),
+      radial-gradient(620px 420px at 50% 112%, rgba(37,211,102,.20), transparent 62%);
+  }
+  .card{
+    position:relative;z-index:1;
+    width:100%;max-width:430px;
+    background:rgba(255,255,255,.055);
+    border:1px solid rgba(255,255,255,.12);
+    border-radius:26px;
+    padding:26px 22px 22px;
+    box-shadow:0 28px 70px rgba(0,0,0,.55);
+    backdrop-filter:blur(16px);
+    -webkit-backdrop-filter:blur(16px);
+  }
+  .pill{
+    display:inline-flex;align-items:center;gap:7px;
+    font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+    color:rgba(255,255,255,.72);
+    background:rgba(255,255,255,.08);
+    border:1px solid rgba(255,255,255,.12);
+    padding:6px 12px;border-radius:999px;
+  }
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--wa);box-shadow:0 0 10px var(--wa)}
+  h1{
+    margin:16px 0 8px;
+    font-size:25px;line-height:1.22;font-weight:700;letter-spacing:-.02em;
+  }
+  h1 em{
+    font-style:normal;
+    background:linear-gradient(92deg,#f9ce34,#ee2a7b 45%,#8a3ffc 92%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .lead{
+    margin:0 0 4px;font-size:14.5px;line-height:1.62;color:var(--muted);
+  }
+  .lead b{color:#fff;font-weight:600}
+  .en{margin:6px 0 0;font-size:12.5px;line-height:1.6;color:rgba(255,255,255,.45)}
+  .qr-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:20px 0 6px}
+  .qr{
+    background:#fff;border-radius:18px;padding:10px 10px 9px;
+    display:flex;flex-direction:column;align-items:center;gap:8px;
+    text-decoration:none;color:#111;
+    transition:transform .18s ease, box-shadow .18s ease;
+    box-shadow:0 10px 26px rgba(0,0,0,.28);
+  }
+  .qr:active{transform:scale(.975)}
+  .qr img{width:100%;height:auto;display:block;border-radius:10px;background:#fff}
+  .qr span{
+    font-size:12.5px;font-weight:600;letter-spacing:.01em;
+    display:flex;align-items:center;gap:6px;
+  }
+  .qr span i{width:7px;height:7px;border-radius:50%;display:inline-block}
+  .qr.ig span i{background:var(--ig)}
+  .qr.wa span i{background:var(--wa)}
+  .hint{
+    text-align:center;font-size:11.5px;color:rgba(255,255,255,.38);
+    margin:10px 0 18px;line-height:1.5;
+  }
+  .btn{
+    display:flex;align-items:center;justify-content:center;gap:9px;
+    width:100%;border:0;cursor:pointer;
+    padding:16px 18px;border-radius:16px;
+    font-size:16px;font-weight:700;letter-spacing:.01em;
+    color:#fff;text-decoration:none;
+    background:linear-gradient(92deg,#f9ce34 0%,#ee2a7b 46%,#7b2ff7 100%);
+    box-shadow:0 14px 34px rgba(238,42,123,.42);
+    transition:transform .16s ease, box-shadow .16s ease, filter .16s ease;
+    -webkit-appearance:none;
+  }
+  .btn:active{transform:translateY(1px) scale(.99);box-shadow:0 8px 22px rgba(238,42,123,.34)}
+  .btn.busy{filter:saturate(.6) brightness(.85);pointer-events:none}
+  .btn svg{width:18px;height:18px;flex:0 0 auto}
+  .foot{
+    margin:14px 0 0;text-align:center;font-size:11px;color:rgba(255,255,255,.3);
+    line-height:1.6;
+  }
+  @media (max-width:360px){
+    h1{font-size:22px}
+    .card{padding:22px 18px 18px;border-radius:22px}
+  }
+</style>
+</head>
+<body>
+<div class="bg"></div>
+
+<main class="card">
+  <div class="pill"><span class="dot"></span> Free WiFi</div>
+
+  <h1>欢迎使用，<br><em>先关注，再上网</em></h1>
+  <p class="lead">关注我们的 <b>WhatsApp</b> 或 <b>Instagram</b>，<br>获取最新产品资讯与购买方式。</p>
+  <p class="en">Follow us on WhatsApp or Instagram for our latest products &amp; how to order.</p>
+
+  <div class="qr-row">
+    <a class="qr ig" href="https://www.instagram.com/dr.crab.zuzz?obrf=ZHIwdW90bzJ2OHB3&amp;utm_source=qr" target="_blank" rel="noopener">
+      <img src="ig.png" alt="Instagram QR code">
+      <span><i></i>Instagram</span>
+    </a>
+    <a class="qr wa" href="#" onclick="return false;">
+      <img src="wa.png" alt="WhatsApp QR code">
+      <span><i></i>WhatsApp</span>
+    </a>
+  </div>
+
+  <p class="hint">长按二维码可保存 · 用手机相机扫一扫<br>Scan the QR code with your phone camera</p>
+
+  <a class="btn" id="login" href="cgi-bin/login">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 12h13M12 5l7 7-7 7"/>
+    </svg>
+    <span>登录并连接网络</span>
+  </a>
+
+  <p class="foot">点击登录即表示同意本 WiFi 的使用条款<br>By connecting you agree to our terms of use</p>
+</main>
+
+<script>
+(function () {
+  var btn = document.getElementById('login');
+  btn.addEventListener('click', function () {
+    btn.classList.add('busy');
+    btn.querySelector('span').textContent = '正在连接…';
+  });
+})();
+</script>
+</body>
+</html>
