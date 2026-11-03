@@ -168,6 +168,22 @@ ensure_enabled() {
 ensure_data() {
 	_m="$1"
 
+	# 段必须存在且类型是 interface。段缺失时 uci set network.modem.apn=xxx
+	# 会建出 `config modem 'modem'`，netifd 不认，ifup 永远失败 —— 这里兜底重建。
+	if [ "$(uci -q get "network.$SECTION")" != "interface" ]; then
+		log "network.$SECTION missing or not an interface, recreating"
+		uci -q delete "network.$SECTION" 2>/dev/null
+		uci -q set "network.$SECTION=interface"
+		uci -q set "network.$SECTION.proto='modemmanager'"
+		uci -q set "network.$SECTION.device='0'"
+		uci -q set "network.$SECTION.iptype='ipv4'"
+		uci -q set "network.$SECTION.metric='10'"
+		uci -q set "network.$SECTION.peerdns='1'"
+		uci -q set "network.$SECTION.disabled='0'"
+		uci -q set "network.$SECTION.autoconnect='1'"
+		uci -q commit network
+	fi
+
 	# 已经拿到 IPv4 就没事
 	if ip -4 addr show wwan0 2>/dev/null | grep -q 'inet '; then
 		rm -f "$NOIPF"
