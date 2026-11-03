@@ -1,0 +1,103 @@
+#!/bin/sh /etc/rc.common
+#
+# captive-portal —— 强制门户
+#
+# 效果：WiFi 客户端连上来后不能直接上网，所有 HTTP 请求被劫持到一个登录页；
+#       点「登录并连接网络」后才放行，并跳转到 Instagram 主页。
+#       客户端一断开，授权立即失效，下次重连重新弹门户。
+#
+# 组成：
+#   1) nftables 表 inet portal
+#        blocked  —— 未登录客户端的 MAC 集合
+#        prerouting(-150) —— 把 blocked 客户端的 tcp/80 DNAT 到本机 8080，
+#                            DNS 也拉回本机 dnsmasq（防止客户端写死 8.8.8.8）
+#        forward(-10)     —— 丢掉 blocked 客户端的所有转发流量
+#        优先级要比 fw4 更早（fw4 的 dnat 是 -100、filter 是 0），才能抢先命中。
+#   2) 独立 uhttpd 实例，只服务 /usr/share/captive-portal
+#        -E /index.html 让任意路径 404 时都落到门户页（捕获各种探测 URL）
+#   3) portal-watch 监听 iw 事件，维护上面两个集合
+
+USE_PROCD=1
+START=96
+STOP=10
+
+PORTAL_ROOT=/usr/share/captive-portal
+PORTAL_PORT=8080
+LAN_IFACE="${PORTAL_LAN_IFACE:-br-lan}"
+WIFI_IFACE="${PORTAL_WIFI_IFACE:-phy0-ap0}"
+
+log() { logger -t captive-portal "$*"; }
+
+lan_ip() {
+	_ip=$(uci -q get network.lan.ipaddr | cut -d/ -f1)
+	[ -n "$_ip" ] || _ip=192.168.10.1
+	echo "$_ip"
+}
+
+setup_nft() {
+	_lip=$(lan_ip)
+
+	nft delete table inet portal 2>/dev/null
+
+	nft -f - <<-EOF
+	table inet portal {
+		set blocked {
+			type ether_addr
+			flags timeout
+		}
+
+		set allowed {
+			type ether_addr
+			flags timeout
+		}
+
+		chain prerouting {
+			type nat hook prerouting priority -150; policy accept;
+			iifname "$LAN_IFACE" ether saddr @blocked meta l4proto tcp tcp dport 80 dnat ip to $_lip:$PORTAL_PORT
+			iifname "$LAN_IFACE" ether saddr @blocked meta l4proto udp udp dport 53 dnat ip to $_lip:53
+			iifname "$LAN_IFACE" ether saddr @blocked meta l4proto tcp tcp dport 53 dnat ip to $_lip:53
+		}
+
+		chain forward {
+			type filter hook forward priority -10; policy accept;
+			iifname "$LAN_IFACE" ether saddr @blocked drop
+		}
+	}
+	EOF
+
+	if nft list table inet portal >/dev/null 2>&1; then
+		log "nftables ready (lan=$LAN_IFACE portal=$_lip:$PORTAL_PORT)"
+	else
+		log "ERROR: failed to install nftables table"
+	fi
+}
+
+start_service() {
+	setup_nft
+
+	procd_open_instance "httpd"
+	procd_set_param command /usr/sbin/uhttpd \
+		-f -p "0.0.0.0:$PORTAL_PORT" -h "$PORTAL_ROOT" \
+		-E /index.html -I index.html -x /cgi-bin -n 8 -N 64
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+
+	procd_open_instance "watch"
+	procd_set_param command /usr/bin/portal-watch
+	procd_set_param env WIFI_IFACE="$WIFI_IFACE"
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+reload_service() {
+	setup_nft
+}
+
+stop_service() {
+	nft delete table inet portal 2>/dev/null
+	log "stopped"
+}
