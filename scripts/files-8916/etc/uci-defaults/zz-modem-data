@@ -9,26 +9,43 @@
 #   「modem registered + packet-service attached，但 wwan0 没有 IPv4、
 #   整机不能上网」。
 #
-#   容易踩的坑：段不存在时 `uci set network.modem.apn=3gnet` 会建出一个
+#   容易踩的坑：段不存在时 `uci set network.modem.apn=wonet` 会建出一个
 #   `config modem 'modem'`（类型等于段名），netifd 不认这种段，
 #   看起来配置写进去了、实际上永远不生效。所以这里显式写 `=interface`。
 #
 #   /etc/init.d/auto_apn 的 worker 只负责按 IMSI 改 APN 选项再 ifup，
 #   不负责建段 —— 段必须在这里建好。
 #
+# APN 默认值：
+#   联通 WF2 出厂卡用 wonet（4G/5G 通用 APN，3gnet 是 3G 时代的老 APN）。
+#   这里只是「先写一个能用的默认值」，开机后 auto_apn 的 worker 会按 IMSI
+#   覆盖成对应运营商的 APN（移动 cmnet / 联通 wonet / 电信 ctnet / 广电 cbnet）。
+#   这样即使 worker 还没跑到，netifd 也能用 wonet 先拨上去。
+#
 # 命名用 zz- 前缀，保证在 openstick_tweak 之后执行。
 
-uci -q batch <<-EOF
-	set network.modem=interface
-	set network.modem.proto='modemmanager'
-	set network.modem.device='0'
-	set network.modem.iptype='ipv4'
-	set network.modem.metric='10'
-	set network.modem.peerdns='1'
-	set network.modem.disabled='0'
-	set network.modem.autoconnect='1'
-	commit network
-EOF
+DEFAULT_APN='wonet'
+
+if [ "$(uci -q get network.modem)" != "interface" ]; then
+	uci -q batch <<-EOF
+		set network.modem=interface
+		set network.modem.proto='modemmanager'
+		set network.modem.device='0'
+		set network.modem.iptype='ipv4'
+		set network.modem.metric='10'
+		set network.modem.peerdns='1'
+		set network.modem.disabled='0'
+		set network.modem.autoconnect='1'
+		set network.modem.apn='$DEFAULT_APN'
+		commit network
+	EOF
+else
+	# 段已存在（升级/二次执行）：只补齐关键项，不覆盖用户已改过的 APN
+	uci -q set network.modem.disabled='0'
+	uci -q set network.modem.autoconnect='1'
+	[ -n "$(uci -q get network.modem.apn)" ] || uci -q set network.modem.apn="$DEFAULT_APN"
+	uci -q commit network
+fi
 
 # 官方 simadmin 包留下的三个旧脚本会自启：simadmin-data 用裸 QMI WDS 抢数据面
 # （本模组实测会被写进崩溃循环），simadmin-imsd / simadmin-watchdog 会 rebind
